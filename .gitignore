@@ -1,3 +1,44 @@
 # Ignorar todos los archivos Markdown del repositorio
 *.md
 **/*.md
+!README.md
+
+# Dependencias
+node_modules/
+**/node_modules/
+
+# Builds y artefactos
+dist/
+build/
+coverage/
+**/dist/
+**/build/
+**/coverage/
+
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Archivos temporales
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# VS Code y otros editores
+.vscode/*
+!.vscode/settings.json
+.idea/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
