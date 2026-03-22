@@ -70,6 +70,15 @@ WHERE p.id = pn.id
 ALTER TABLE pedidos
 ALTER COLUMN numero_pedido SET NOT NULL;
 
+-- Normaliza datos heredados donde nombre_cliente incluia "Pedido N"
+UPDATE pedidos
+SET nombre_cliente = regexp_replace(
+  nombre_cliente,
+  ' Pedido ' || numero_pedido::text || '$',
+  ''
+)
+WHERE nombre_cliente ~ (' Pedido ' || numero_pedido::text || '$');
+
 -- Indices utiles para consultas frecuentes
 CREATE INDEX IF NOT EXISTS idx_pedidos_usuario_id ON pedidos(usuario_id);
 CREATE INDEX IF NOT EXISTS idx_pedidos_estado ON pedidos(estado);

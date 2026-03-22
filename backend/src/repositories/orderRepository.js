@@ -26,7 +26,7 @@ async function createOrder({ usuarioId, latitud, longitud, direccion, estado }) 
     resolved_payload AS (
       SELECT
         next_order.numero AS numero_pedido_final,
-        user_data.nombre || ' Pedido ' || next_order.numero::text AS nombre_cliente_final
+        user_data.nombre AS nombre_cliente_final
       FROM user_data
       CROSS JOIN next_order
     )

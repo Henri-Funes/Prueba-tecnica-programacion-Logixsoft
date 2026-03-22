@@ -7,6 +7,11 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import { createOrder, getOrders, reverseGeocode, updateOrder } from '../services/api';
 import { EL_SALVADOR_BOUNDARY_LNG_LAT } from '../data/el-salvador-boundary';
+import SelectedOrderPanel from '../features/dashboard/components/SelectedOrderPanel';
+import HistoryPanel from '../features/dashboard/components/HistoryPanel';
+import ActiveMarkersPanel from '../features/dashboard/components/ActiveMarkersPanel';
+import MapHelpPopover from '../features/dashboard/components/MapHelpPopover';
+import { useMapHelpPopover } from '../features/dashboard/hooks/useMapHelpPopover';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -137,13 +142,30 @@ function RecenterMap({ position }) {
   return null;
 }
 
+function ResetMapBounds({ resetSignal }) {
+  const map = useMap();
+
+  useEffect(() => {
+    map.fitBounds(EL_SALVADOR_MAX_BOUNDS, {
+      animate: true,
+      padding: [24, 24]
+    });
+  }, [map, resetSignal]);
+
+  return null;
+}
+
 function Dashboard() {
   const navigate = useNavigate();
   const [markers, setMarkers] = useState([]);
   const [selectedMarkerId, setSelectedMarkerId] = useState(null);
   const [selectedHistoryDate, setSelectedHistoryDate] = useState(null);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [mapResetSignal, setMapResetSignal] = useState(0);
   const [error, setError] = useState('');
   const [mapError, setMapError] = useState('');
+  const { showMapHelp, isMapHelpClosing, mapHelpPanelRef, mapHelpButtonRef, toggleMapHelp } =
+    useMapHelpPopover();
 
   const token = localStorage.getItem('token');
   const user = JSON.parse(localStorage.getItem('user') || 'null');
@@ -163,16 +185,6 @@ function Dashboard() {
 
         const loadedMarkers = data.map(mapOrderToMarker);
         setMarkers(loadedMarkers);
-
-        const persisted = loadedMarkers.filter((item) => item.isPersisted);
-        if (persisted.length > 0) {
-          const firstDate = getDateKeyFromIso(persisted[0].createdAt);
-          setSelectedHistoryDate(firstDate);
-        }
-
-        if (loadedMarkers.length > 0) {
-          setSelectedMarkerId(loadedMarkers[0].markerId);
-        }
       } catch (err) {
         setError(err.message);
       }
@@ -423,11 +435,17 @@ function Dashboard() {
       return;
     }
 
-    setMarkers([]);
+    setMarkers((prev) => prev.filter((item) => item.isPersisted));
     setSelectedMarkerId(null);
     setSelectedHistoryDate(null);
+    setShowAllHistory(false);
+    setMapResetSignal((prev) => prev + 1);
     setError('');
     setMapError('');
+  }
+
+  function handleResetMapView() {
+    setMapResetSignal((prev) => prev + 1);
   }
 
   function handleLogout() {
@@ -446,14 +464,19 @@ function Dashboard() {
   const selectedPosition = selectedMarker ? [selectedMarker.latitud, selectedMarker.longitud] : null;
 
   const markerList = useMemo(() => {
-    if (!selectedHistoryDate) {
+    if (showAllHistory) {
       return markers;
+    }
+
+    if (!selectedHistoryDate) {
+      // Keep dashboard clean on initial load: only show local unsaved markers when no date is selected.
+      return markers.filter((item) => !item.isPersisted);
     }
 
     return markers.filter(
       (item) => item.isPersisted && getDateKeyFromIso(item.createdAt) === selectedHistoryDate
     );
-  }, [markers, selectedHistoryDate]);
+  }, [markers, selectedHistoryDate, showAllHistory]);
 
   const historyByDate = useMemo(() => {
     const persisted = markers.filter((item) => item.isPersisted);
@@ -480,6 +503,7 @@ function Dashboard() {
     historyByDate.find((group) => group.dateKey === selectedHistoryDate) || null;
 
   function handleSelectHistoryDate(dateKey) {
+    setShowAllHistory(false);
     setSelectedHistoryDate(dateKey);
 
     const group = historyByDate.find((item) => item.dateKey === dateKey);
@@ -488,9 +512,22 @@ function Dashboard() {
     }
   }
 
+  function handleToggleShowAllHistory() {
+    setShowAllHistory((prev) => {
+      const nextValue = !prev;
+
+      if (nextValue) {
+        setSelectedHistoryDate(null);
+        setSelectedMarkerId(null);
+      }
+
+      return nextValue;
+    });
+  }
+
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-100 via-ocean-50 to-slate-200 p-4 text-slate-900 md:p-8">
-      <section className="mx-auto w-full max-w-[1300px] rounded-3xl border border-white/70 bg-white/90 p-4 shadow-2xl shadow-slate-300/60 backdrop-blur-sm md:p-6">
+    <main className="min-h-screen bg-gradient-to-br from-slate-100 via-ocean-50 to-slate-200 p-4 text-slate-900 md:flex md:items-center md:p-8">
+      <section className="mx-auto w-full max-w-[1680px] rounded-3xl border border-white/70 bg-white/90 p-5 shadow-2xl shadow-slate-300/60 backdrop-blur-sm md:p-7">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-ocean-700">Dashboard de Pedidos</h1>
@@ -509,123 +546,40 @@ function Dashboard() {
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[290px_minmax(0,1fr)_280px]">
           <aside className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4">
-              <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-600">Pedido Seleccionado</h2>
-              {selectedMarker ? (
-                <>
-                  <p className="text-sm text-slate-700">
-                    <span className="font-semibold">Estado:</span> {statusLabel(selectedMarker.estado)}
-                  </p>
-                  <p className="text-sm text-slate-700">
-                    <span className="font-semibold">Direccion:</span>{' '}
-                    {selectedMarker.loadingAddress ? 'Consultando Nominatim...' : selectedMarker.direccion}
-                  </p>
+            <SelectedOrderPanel
+              selectedMarker={selectedMarker}
+              statusLabel={statusLabel}
+              handleMarkDelivered={handleMarkDelivered}
+              handleSaveOrUpdate={handleSaveOrUpdate}
+              handleCancelOrder={handleCancelOrder}
+            />
 
-                  {['pendiente', 'en_proceso'].includes(selectedMarker.estado) ? (
-                    <button
-                      type="button"
-                      onClick={handleMarkDelivered}
-                      disabled={selectedMarker.processingDelivery}
-                      className="mt-3 w-full rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {selectedMarker.processingDelivery ? 'Procesando entrega...' : 'Marcar como Entregado'}
-                    </button>
-                  ) : null}
-
-                  <div className="mt-3 grid grid-cols-1 gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSaveOrUpdate}
-                      disabled={
-                        selectedMarker.saving ||
-                        selectedMarker.processingDelivery ||
-                        (selectedMarker.isPersisted && !selectedMarker.isDirty)
-                      }
-                      className="rounded-xl bg-ocean-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ocean-700 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {selectedMarker.saving
-                        ? 'Guardando...'
-                        : selectedMarker.isPersisted && selectedMarker.isDirty
-                          ? 'Actualizar'
-                          : selectedMarker.isPersisted
-                            ? 'Guardado'
-                            : 'Guardar Pedido'}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleCancelOrder}
-                      disabled={selectedMarker.estado === 'entregado'}
-                      className="rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-100"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-slate-500">Selecciona o simula un pedido para empezar.</p>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-600">Historial del Usuario</h2>
-              {historyByDate.length === 0 ? (
-                <p className="text-sm text-slate-500">Aun no hay pedidos.</p>
-              ) : (
-                <ul className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                  {historyByDate.map((group) => (
-                    <li key={group.dateKey}>
-                      <button
-                        type="button"
-                        onClick={() => handleSelectHistoryDate(group.dateKey)}
-                        className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
-                          selectedHistoryDate === group.dateKey
-                            ? 'border-ocean-500 bg-ocean-50'
-                            : 'border-slate-200 bg-white hover:bg-slate-50'
-                        }`}
-                      >
-                        <p className="font-semibold text-slate-800">Pedidos del dia {group.dateLabel}</p>
-                        <p className="text-xs text-slate-500">
-                          {group.count} pedido{group.count === 1 ? '' : 's'}
-                        </p>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {selectedHistoryGroup ? (
-                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    Registros del dia {selectedHistoryGroup.dateLabel}
-                  </p>
-                  <ul className="max-h-40 space-y-2 overflow-y-auto pr-1">
-                    {selectedHistoryGroup.items.map((item) => (
-                      <li key={`history-item-${item.markerId}`}>
-                        <button
-                          type="button"
-                          onClick={() => focusMarker(item.markerId)}
-                          className={`w-full rounded-lg border px-2 py-1.5 text-left text-xs transition ${
-                            selectedMarkerId === item.markerId
-                              ? 'border-ocean-500 bg-ocean-50'
-                              : 'border-slate-200 bg-white hover:bg-slate-100'
-                          }`}
-                        >
-                          <p className="font-semibold text-slate-700">Nº de pedido {item.numeroPedido}</p>
-                          <p className="text-slate-500">{item.direccion}</p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
+            <HistoryPanel
+              historyByDate={historyByDate}
+              selectedHistoryDate={selectedHistoryDate}
+              handleSelectHistoryDate={handleSelectHistoryDate}
+              showAllHistory={showAllHistory}
+              handleToggleShowAllHistory={handleToggleShowAllHistory}
+              persistedCount={markers.filter((item) => item.isPersisted).length}
+              selectedHistoryGroup={selectedHistoryGroup}
+              selectedMarkerId={selectedMarkerId}
+              focusMarker={focusMarker}
+            />
           </aside>
 
           <section className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-3 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-800">Mapa de Santa Ana y El Salvador</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-slate-800">Mapa de El Salvador</h2>
+                  <MapHelpPopover
+                    showMapHelp={showMapHelp}
+                    isMapHelpClosing={isMapHelpClosing}
+                    mapHelpPanelRef={mapHelpPanelRef}
+                    mapHelpButtonRef={mapHelpButtonRef}
+                    toggleMapHelp={toggleMapHelp}
+                  />
+                </div>
                 <p className="text-sm text-slate-500">
                   Simula varios pedidos y arrastra los marcadores para ajustar la direccion de entrega.
                 </p>
@@ -639,50 +593,77 @@ function Dashboard() {
               </button>
             </div>
 
-            <MapContainer
-              center={SANTA_ANA_CENTER}
-              zoom={14}
-              scrollWheelZoom
-              maxBounds={EL_SALVADOR_MAX_BOUNDS}
-              maxBoundsViscosity={1.0}
-              minZoom={8}
-            >
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
+            <div className="relative">
+              <MapContainer
+                bounds={EL_SALVADOR_MAX_BOUNDS}
+                scrollWheelZoom
+                maxBounds={EL_SALVADOR_MAX_BOUNDS}
+                maxBoundsViscosity={1.0}
+                minZoom={8}
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
 
-              {selectedPosition ? <RecenterMap position={selectedPosition} /> : null}
+                <ResetMapBounds resetSignal={mapResetSignal} />
+                {selectedPosition ? <RecenterMap position={selectedPosition} /> : null}
 
-              {markerList.map((item) => {
-                const draggable = item.estado === 'pendiente' || item.estado === 'en_proceso';
-                const icon =
-                  item.estado === 'cancelado'
-                    ? cancelledIcon
-                    : item.estado === 'entregado'
-                      ? deliveredIcon
-                      : undefined;
+                {markerList.map((item) => {
+                  const draggable = item.estado === 'pendiente' || item.estado === 'en_proceso';
+                  const icon =
+                    item.estado === 'cancelado'
+                      ? cancelledIcon
+                      : item.estado === 'entregado'
+                        ? deliveredIcon
+                        : undefined;
 
-                return (
-                  <Marker
-                    key={item.markerId}
-                    position={[item.latitud, item.longitud]}
-                    draggable={draggable}
-                    {...(icon ? { icon } : {})}
-                    eventHandlers={{
-                      click: () => focusMarker(item.markerId),
-                      dragend: (event) => handleMarkerDragEnd(item.markerId, event)
-                    }}
-                  >
-                    <Popup>
-                      <p className="m-0 text-sm font-semibold">{item.nombreCliente}</p>
-                      <p className="m-0 text-xs">Estado: {statusLabel(item.estado)}</p>
-                      <p className="m-0 text-xs">{item.loadingAddress ? 'Actualizando direccion...' : item.direccion}</p>
-                    </Popup>
-                  </Marker>
-                );
-              })}
-            </MapContainer>
+                  return (
+                    <Marker
+                      key={item.markerId}
+                      position={[item.latitud, item.longitud]}
+                      draggable={draggable}
+                      {...(icon ? { icon } : {})}
+                      eventHandlers={{
+                        click: () => focusMarker(item.markerId),
+                        dragend: (event) => handleMarkerDragEnd(item.markerId, event)
+                      }}
+                    >
+                      <Popup>
+                        <p className="m-0 text-sm font-semibold">{item.nombreCliente}</p>
+                        <p className="m-0 text-xs">Estado: {statusLabel(item.estado)}</p>
+                        <p className="m-0 text-xs">{item.loadingAddress ? 'Actualizando direccion...' : item.direccion}</p>
+                      </Popup>
+                    </Marker>
+                  );
+                })}
+              </MapContainer>
+
+              <button
+                type="button"
+                onClick={handleResetMapView}
+                className="absolute right-3 top-3 z-[700] inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-base font-bold text-slate-700 shadow-md transition hover:-translate-y-0.5 hover:bg-slate-100"
+                title="Reiniciar vista del mapa"
+                aria-label="Reiniciar vista del mapa"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  className="h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v4" />
+                  <path d="M12 18v4" />
+                  <path d="M2 12h4" />
+                  <path d="M18 12h4" />
+                </svg>
+              </button>
+            </div>
 
             <div className="mt-3 flex justify-end">
               <button
@@ -696,34 +677,11 @@ function Dashboard() {
             </div>
           </section>
 
-          <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-600">Marcadores Activos</h2>
-            {markerList.length === 0 ? (
-              <p className="text-sm text-slate-500">Aun no hay marcadores en el mapa.</p>
-            ) : (
-              <ul className="max-h-[510px] space-y-2 overflow-y-auto pr-1">
-                {markerList.map((item) => (
-                  <li key={`active-${item.markerId}`}>
-                    <button
-                      type="button"
-                      onClick={() => focusMarker(item.markerId)}
-                      className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
-                        selectedMarkerId === item.markerId
-                          ? 'border-ocean-500 bg-ocean-50'
-                          : 'border-slate-200 bg-white hover:bg-slate-50'
-                      }`}
-                    >
-                      <p className="font-semibold text-slate-800">{item.nombreCliente}</p>
-                      <p className="text-xs text-slate-500">
-                        Nº de pedido: {item.numeroPedido ?? 'Pendiente de guardar'}
-                      </p>
-                      <p className="text-xs text-slate-500">{item.direccion}</p>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </aside>
+          <ActiveMarkersPanel
+            markerList={markerList}
+            selectedMarkerId={selectedMarkerId}
+            focusMarker={focusMarker}
+          />
         </div>
 
         {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
